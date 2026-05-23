@@ -1,0 +1,74 @@
+name: Deploy Forester site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deployment at a time; don't cancel in-progress runs.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.3"            # forester 5.0 requires ocaml >= 5.3
+          opam-disable-sandboxing: true    # required on GitHub-hosted runners
+
+      - name: Cache opam packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.opam
+          # v3: bust cache to force fresh Forester 5.0 install
+          key: opam-${{ runner.os }}-5.3-forester-v1-${{ hashFiles('**/*.opam', '**/opam') }}
+          restore-keys: |
+            opam-${{ runner.os }}-5.3-forester-v1-
+            opam-${{ runner.os }}-5.3-
+
+      - name: Install Forester 5.0
+        # Pin to 5.0 so CI always matches the local install
+        run: opam install forester.5.0 --yes
+
+      - name: Clean stale output (old Forester artefacts in git)
+        # theme/ must stay — Forester reads it; only wipe the generated output
+        run: rm -rf output/
+
+      - name: Build site
+        run: opam exec -- forester build
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Forester 5.0 places files in output/<url-path>/ based on the url
+          # setting in forest.toml. Upload that subdirectory directly so
+          # GitHub Pages serves it at the correct /simulacrum-columbae/ root.
+          path: output/simulacrum-columbae
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
